@@ -40,6 +40,22 @@ uv run shadow-fuzzer.py --serve --host 0.0.0.0 config.toml
 
 Open `http://127.0.0.1:8000` (or your server's IP address) in your browser.
 
+## Re-running a single run
+
+Use `--run-index` to re-run a specific run by its 0-based index:
+
+```bash
+# Re-run only run index 1 (the 2nd run in the sweep)
+uv run shadow-fuzzer.py --run-index 1 config.toml
+```
+
+The fuzzer skips existing run directories, so delete the old one first if you want to reuse the same name:
+
+```bash
+rm -rf fuzzer-output/big-relaxed-skunk
+uv run shadow-fuzzer.py --run-index 1 config.toml
+```
+
 ## Cleanup
 
 You can clean up previous fuzzer outputs and the dashboard database using the following flags:

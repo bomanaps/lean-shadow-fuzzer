@@ -767,6 +767,12 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--run-index",
+        type=int,
+        default=None,
+        help="Run only a single run index (0-based) instead of the full sweep",
+    )
+    parser.add_argument(
         "--host",
         default="127.0.0.1",
         help="Dashboard bind host when --serve is enabled",
@@ -867,8 +873,17 @@ def main() -> None:
     hash_sig_key_cache_root = output_dir / HASH_SIG_KEY_CACHE_DIR
     failed_runs = 0
 
-    for run_index in range(int(max_runs)):
-        print(f"--- Run {run_index + 1}/{max_runs} ---")
+    run_indices: list[int]
+    if args.run_index is not None:
+        run_indices = [args.run_index]
+    else:
+        run_indices = list(range(int(max_runs)))
+
+    for run_index in run_indices:
+        if args.run_index is not None:
+            print(f"--- Run {run_index + 1} (index {run_index}) ---")
+        else:
+            print(f"--- Run {run_index + 1}/{max_runs} ---")
 
         resolved = _resolve_config(template, run_index)
         if docker_runtime:
