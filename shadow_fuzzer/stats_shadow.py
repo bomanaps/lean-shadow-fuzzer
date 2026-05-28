@@ -20,7 +20,12 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from .clients import all_parsers, get_parser_for_host
+# Ensure repository root is in sys.path when run as a standalone script
+fuzzer_root = Path(__file__).resolve().parent.parent
+if str(fuzzer_root) not in sys.path:
+    sys.path.insert(0, str(fuzzer_root))
+
+from shadow_fuzzer.clients import all_parsers, get_parser_for_host
 
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 SHADOW_TS_RE = re.compile(
