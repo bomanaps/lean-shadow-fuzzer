@@ -31,11 +31,14 @@ The dashboard provides a web UI for monitoring fuzzer runs.
 # Build the frontend (one time)
 cd web && npm install && npm run build
 
-# Start the dashboard server
+# Start the dashboard server (default: binds to 127.0.0.1)
 uv run shadow-fuzzer.py --serve config.toml
+
+# Start the dashboard server and bind to all interfaces (0.0.0.0)
+uv run shadow-fuzzer.py --serve --host 0.0.0.0 config.toml
 ```
 
-Open `http://127.0.0.1:8000` in your browser.
+Open `http://127.0.0.1:8000` (or your server's IP address) in your browser.
 
 ## Cleanup
 
