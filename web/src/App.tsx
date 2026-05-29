@@ -566,7 +566,7 @@ export default function App() {
           </section>
 
           <section className="card card-pad">
-            <SectionTitle title="Block And Chain Health" subtitle="latest complete stats snapshot" badge={healthBadge(run)} />
+            <SectionTitle title="Block And Chain Health" subtitle="live indexed events" badge={healthBadge(run)} />
             <div className="metric-grid">
               <Metric label="Published blocks" value={run?.stats?.blocks?.summary?.n_published ?? 0} />
               <Metric label="Received blocks" value={run?.stats?.blocks?.summary?.n_received ?? 0} />

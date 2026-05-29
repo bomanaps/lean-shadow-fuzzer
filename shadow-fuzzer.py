@@ -960,13 +960,6 @@ def main() -> None:
             _set_stage("generating_topology")
             print("  Generating topology...")
             _run_topology(run_dir, {**resolved, "_internal": internal})
-            if dashboard_db:
-                from shadow_fuzzer.dashboard_events import stats_from_run
-
-                dashboard_db.update_stats_snapshot(
-                    run_id,
-                    stats_from_run(run_dir, metadata),
-                )
 
             _set_stage("generating_shadow_yaml")
             print("  Generating shadow.yaml...")

@@ -386,10 +386,40 @@ class DashboardDB:
                     "n_nodes": total_nodes or len(received_by_slot_host[slot]),
                     "n_nodes_reached_threshold": len(host_threshold_times),
                     "target_attestation_coverage": 0.95,
+                    "p50_nodes_to_95_attestations_ms": _percentile(relative_times, 0.50),
+                    "p90_nodes_to_95_attestations_ms": _percentile(relative_times, 0.90),
                     "p95_nodes_to_95_attestations_ms": _percentile(relative_times, 0.95),
                     "max_nodes_to_95_attestations_ms": max(relative_times) if relative_times else None,
                 }
             )
+        coverage_summary = {
+            "slots_with_data": len(coverage_slots),
+            "source": "live_events",
+            "median_slot_p50_nodes_to_95_attestations_ms": _percentile(
+                [
+                    float(slot["p50_nodes_to_95_attestations_ms"])
+                    for slot in coverage_slots
+                    if slot.get("p50_nodes_to_95_attestations_ms") is not None
+                ],
+                0.50,
+            ),
+            "median_slot_p90_nodes_to_95_attestations_ms": _percentile(
+                [
+                    float(slot["p90_nodes_to_95_attestations_ms"])
+                    for slot in coverage_slots
+                    if slot.get("p90_nodes_to_95_attestations_ms") is not None
+                ],
+                0.50,
+            ),
+            "median_slot_p95_nodes_to_95_attestations_ms": _percentile(
+                [
+                    float(slot["p95_nodes_to_95_attestations_ms"])
+                    for slot in coverage_slots
+                    if slot.get("p95_nodes_to_95_attestations_ms") is not None
+                ],
+                0.50,
+            ),
+        }
 
         return {
             "blocks": {
@@ -414,10 +444,7 @@ class DashboardDB:
                     "target_attestation_coverage": 0.95,
                     "node_percentiles": [0.5, 0.9, 0.95],
                     "slots": coverage_slots,
-                    "summary": {
-                        "slots_with_data": len(coverage_slots),
-                        "source": "live_events",
-                    },
+                    "summary": coverage_summary,
                 },
                 "slots": [],
                 "summary": {

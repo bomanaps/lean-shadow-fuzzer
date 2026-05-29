@@ -551,7 +551,13 @@ validators:
             coverage = run["stats"]["attestations"]["coverage"]["slots"]
             self.assertEqual(len(coverage), 1)
             self.assertEqual(coverage[0]["n_nodes_reached_threshold"], 2)
+            self.assertEqual(coverage[0]["p50_nodes_to_95_attestations_ms"], 80.0)
+            self.assertEqual(coverage[0]["p90_nodes_to_95_attestations_ms"], 120.0)
             self.assertEqual(coverage[0]["p95_nodes_to_95_attestations_ms"], 120.0)
+            summary = run["stats"]["attestations"]["coverage"]["summary"]
+            self.assertEqual(summary["median_slot_p50_nodes_to_95_attestations_ms"], 80.0)
+            self.assertEqual(summary["median_slot_p90_nodes_to_95_attestations_ms"], 120.0)
+            self.assertEqual(summary["median_slot_p95_nodes_to_95_attestations_ms"], 120.0)
 
 
 class DashboardEventTests(unittest.TestCase):
