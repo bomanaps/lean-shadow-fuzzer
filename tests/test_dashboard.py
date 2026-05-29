@@ -511,6 +511,48 @@ validators:
             self.assertEqual(chain["peers"][0]["justified_slot"], 1)
             self.assertEqual(chain["peers"][0]["finalized_slot"], 0)
 
+    def test_live_run_stats_use_events_and_hide_transient_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = DashboardDB(Path(tmp) / "runs.db")
+            run_dir = Path(tmp) / "run-live"
+            run_dir.mkdir()
+            db.start_run(
+                "run-live",
+                run_dir,
+                {
+                    "run_id": "run-live",
+                    "simulation": {"duration_secs": 120, "total_nodes": 2},
+                },
+                ["shadow.data/hosts directory not found; no propagation stats available"],
+            )
+            db.insert_events(
+                "run-live",
+                [
+                    {"kind": "block_published", "host": "zeam-0", "slot": 1, "ts_ms": 64000.0, "message": "published", "payload": {"slot": 1, "proposer": 0}},
+                    {"kind": "block_received", "host": "zeam-1", "slot": 1, "ts_ms": 64100.0, "message": "received", "payload": {"slot": 1, "proposer": 0}},
+                    {"kind": "chain_status", "host": "zeam-0", "slot": 1, "ts_ms": 0.0, "message": "status", "payload": {"slot": 1, "head_slot": 1}},
+                    {"kind": "chain_status", "host": "zeam-1", "slot": 1, "ts_ms": 0.0, "message": "status", "payload": {"slot": 1, "head_slot": 1}},
+                    {"kind": "attestation_sent", "host": "zeam-0", "slot": 1, "ts_ms": 64800.0, "message": "sent", "payload": {"slot": 1, "validator_id": 0}},
+                    {"kind": "attestation_received", "host": "zeam-0", "slot": 1, "ts_ms": 64850.0, "message": "recv", "payload": {"slot": 1, "validator_id": 0}},
+                    {"kind": "attestation_received", "host": "zeam-0", "slot": 1, "ts_ms": 64880.0, "message": "recv", "payload": {"slot": 1, "validator_id": 1}},
+                    {"kind": "attestation_received", "host": "zeam-1", "slot": 1, "ts_ms": 64900.0, "message": "recv", "payload": {"slot": 1, "validator_id": 0}},
+                    {"kind": "attestation_received", "host": "zeam-1", "slot": 1, "ts_ms": 64920.0, "message": "recv", "payload": {"slot": 1, "validator_id": 1}},
+                ],
+            )
+
+            run = db.get_run("run-live")
+            if run is None:
+                self.fail("expected live run")
+            self.assertEqual(run["warnings"], [])
+            self.assertEqual(run["stats"]["blocks"]["summary"]["n_published"], 1)
+            self.assertEqual(run["stats"]["blocks"]["summary"]["n_received"], 1)
+            self.assertEqual(run["stats"]["chain_status"]["summary"]["slots_with_data"], 1)
+            self.assertEqual(run["stats"]["chain_status"]["summary"]["hosts_with_data"], 2)
+            coverage = run["stats"]["attestations"]["coverage"]["slots"]
+            self.assertEqual(len(coverage), 1)
+            self.assertEqual(coverage[0]["n_nodes_reached_threshold"], 2)
+            self.assertEqual(coverage[0]["p95_nodes_to_95_attestations_ms"], 120.0)
+
 
 class DashboardEventTests(unittest.TestCase):
     def test_event_parser_mappings_and_chain_deltas(self) -> None:

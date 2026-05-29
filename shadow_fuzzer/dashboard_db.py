@@ -171,6 +171,10 @@ class DashboardDB:
         metadata = _json_loads(row["metadata"], {})
         stats = _json_loads(row["stats"], {})
         warnings = _json_loads(row["warnings"], [])
+        live_stats = self._live_stats_from_events(str(row["run_id"]), metadata)
+        if live_stats:
+            stats = self._merge_live_stats(stats, live_stats)
+            warnings = [warning for warning in warnings if not _is_transient_stats_warning(str(warning))]
         return {
             "id": row["id"],
             "run_id": row["run_id"],
@@ -195,6 +199,8 @@ class DashboardDB:
 
     def _summary_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
         warnings = _json_loads(row["warnings"], [])
+        if self._has_live_events(str(row["run_id"])):
+            warnings = [warning for warning in warnings if not _is_transient_stats_warning(str(warning))]
         return {
             "id": row["id"],
             "run_id": row["run_id"],
@@ -212,6 +218,215 @@ class DashboardDB:
             "progress": row["progress"],
             "warnings": warnings,
             "error": row["error"],
+        }
+
+    def _has_live_events(self, run_id: str) -> bool:
+        with self._connect() as conn:
+            count = conn.execute(
+                """
+                SELECT COUNT(*) FROM events
+                WHERE run_id = ?
+                  AND kind IN (
+                    'block_published',
+                    'block_received',
+                    'attestation_sent',
+                    'attestation_received',
+                    'aggregation_received',
+                    'chain_status'
+                  )
+                """,
+                (run_id,),
+            ).fetchone()[0]
+        return int(count) > 0
+
+    def _merge_live_stats(
+        self,
+        stats: dict[str, Any],
+        live_stats: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = dict(stats)
+        for key in ("blocks", "chain_status", "attestations", "event_counts"):
+            if live_stats.get(key):
+                merged[key] = live_stats[key]
+        warnings = [
+            warning
+            for warning in merged.get("warnings", [])
+            if not _is_transient_stats_warning(str(warning))
+        ]
+        merged["warnings"] = warnings
+        return merged
+
+    def _live_stats_from_events(
+        self,
+        run_id: str,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        with self._connect() as conn:
+            event_count_rows = conn.execute(
+                """
+                SELECT kind, COUNT(*) AS count
+                FROM events
+                WHERE run_id = ?
+                GROUP BY kind
+                """,
+                (run_id,),
+            ).fetchall()
+            if not event_count_rows:
+                return {}
+
+            block_rows = conn.execute(
+                """
+                SELECT kind, slot, host, ts_ms, payload
+                FROM events
+                WHERE run_id = ?
+                  AND kind IN ('block_published', 'block_received')
+                  AND slot IS NOT NULL
+                ORDER BY slot ASC, ts_ms ASC, id ASC
+                """,
+                (run_id,),
+            ).fetchall()
+            chain_rows = conn.execute(
+                """
+                SELECT slot, host
+                FROM events
+                WHERE run_id = ?
+                  AND kind = 'chain_status'
+                  AND slot IS NOT NULL
+                  AND host IS NOT NULL
+                """,
+                (run_id,),
+            ).fetchall()
+            attestation_rows = conn.execute(
+                """
+                SELECT kind, slot, host, ts_ms, payload
+                FROM events
+                WHERE run_id = ?
+                  AND kind IN ('attestation_sent', 'attestation_received')
+                  AND slot IS NOT NULL
+                ORDER BY slot ASC, ts_ms ASC, id ASC
+                """,
+                (run_id,),
+            ).fetchall()
+
+        event_counts = {str(row["kind"]): int(row["count"]) for row in event_count_rows}
+        total_nodes = int(metadata.get("simulation", {}).get("total_nodes") or 0)
+        if not total_nodes:
+            total_nodes = int(metadata.get("node_counts", {}).get("zeam") or 0)
+
+        published_by_slot: dict[int, dict[str, Any]] = {}
+        received_by_slot: dict[int, dict[str, float]] = {}
+        for row in block_rows:
+            slot = int(row["slot"])
+            payload = _json_loads(row["payload"], {})
+            if row["kind"] == "block_published":
+                published_by_slot.setdefault(
+                    slot,
+                    {
+                        "slot": slot,
+                        "proposer": payload.get("proposer"),
+                        "published_ms": float(row["ts_ms"]),
+                    },
+                )
+            elif row["kind"] == "block_received" and row["host"]:
+                host = str(row["host"])
+                current = received_by_slot.setdefault(slot, {})
+                ts_ms = float(row["ts_ms"])
+                if host not in current or ts_ms < current[host]:
+                    current[host] = ts_ms
+        block_slots = []
+        for slot in sorted(set(published_by_slot) | set(received_by_slot)):
+            receive_times = received_by_slot.get(slot, {})
+            times = sorted(receive_times.values())
+            item = dict(published_by_slot.get(slot, {"slot": slot}))
+            item.update(
+                {
+                    "n_received": len(receive_times),
+                    "receive_timestamps_ms": receive_times,
+                    "first_receive_ms": times[0] if times else None,
+                    "last_receive_ms": times[-1] if times else None,
+                }
+            )
+            block_slots.append(item)
+
+        chain_slots = {int(row["slot"]) for row in chain_rows}
+        chain_hosts = {str(row["host"]) for row in chain_rows if row["host"]}
+
+        sent_by_slot: dict[int, float] = {}
+        received_by_slot_host: dict[int, dict[str, dict[int, float]]] = {}
+        for row in attestation_rows:
+            slot = int(row["slot"])
+            payload = _json_loads(row["payload"], {})
+            if row["kind"] == "attestation_sent":
+                sent_by_slot[slot] = min(float(row["ts_ms"]), sent_by_slot.get(slot, float("inf")))
+                continue
+            if row["kind"] == "attestation_received" and row["host"]:
+                validator_id = payload.get("validator_id")
+                if validator_id is None:
+                    continue
+                host_map = received_by_slot_host.setdefault(slot, {}).setdefault(str(row["host"]), {})
+                validator_key = int(validator_id)
+                ts_ms = float(row["ts_ms"])
+                if validator_key not in host_map or ts_ms < host_map[validator_key]:
+                    host_map[validator_key] = ts_ms
+        coverage_slots = []
+        threshold = max(1, math.ceil(max(total_nodes, 1) * 0.95))
+        for slot in sorted(received_by_slot_host):
+            host_threshold_times = []
+            for validators in received_by_slot_host[slot].values():
+                if len(validators) >= threshold:
+                    host_threshold_times.append(sorted(validators.values())[threshold - 1])
+            base_ms = sent_by_slot.get(slot)
+            relative_times = [
+                ts_ms - base_ms if base_ms is not None else ts_ms
+                for ts_ms in host_threshold_times
+            ]
+            coverage_slots.append(
+                {
+                    "slot": slot,
+                    "n_nodes": total_nodes or len(received_by_slot_host[slot]),
+                    "n_nodes_reached_threshold": len(host_threshold_times),
+                    "target_attestation_coverage": 0.95,
+                    "p95_nodes_to_95_attestations_ms": _percentile(relative_times, 0.95),
+                    "max_nodes_to_95_attestations_ms": max(relative_times) if relative_times else None,
+                }
+            )
+
+        return {
+            "blocks": {
+                "slots": block_slots,
+                "summary": {
+                    "n_published": event_counts.get("block_published", 0),
+                    "n_received": event_counts.get("block_received", 0),
+                    "slots_with_data": len(block_slots),
+                    "source": "live_events",
+                },
+            },
+            "chain_status": {
+                "slots": [],
+                "summary": {
+                    "slots_with_data": len(chain_slots),
+                    "hosts_with_data": len(chain_hosts),
+                    "source": "live_events",
+                },
+            },
+            "attestations": {
+                "coverage": {
+                    "target_attestation_coverage": 0.95,
+                    "node_percentiles": [0.5, 0.9, 0.95],
+                    "slots": coverage_slots,
+                    "summary": {
+                        "slots_with_data": len(coverage_slots),
+                        "source": "live_events",
+                    },
+                },
+                "slots": [],
+                "summary": {
+                    "n_sent": event_counts.get("attestation_sent", 0),
+                    "n_received": event_counts.get("attestation_received", 0),
+                    "source": "live_events",
+                },
+            },
+            "event_counts": event_counts,
         }
 
     def start_run(
