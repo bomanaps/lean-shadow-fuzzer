@@ -4,9 +4,17 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "coolname>=2.0",
-    "fastapi>=0.110",
     "pyyaml>=6.0",
-    "uvicorn[standard]>=0.27",
+]
+
+[dependency-groups]
+notebooks = [
+    "jupyter>=1.0",
+    "papermill>=2.6",
+    "nbconvert>=7.0",
+    "plotly>=5.0",
+    "pandas>=2.0",
+    "nbformat>=5.0",
 ]
 
 [tool.uv]

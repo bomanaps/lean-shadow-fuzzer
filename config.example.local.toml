@@ -9,6 +9,7 @@ seed = 42                                                                  # Bas
 output_dir = "fuzzer-output"                                               # Directory where per-run output folders are placed.
 runner = "local"                                                           # Shadow runner: "local" (host shadow binary) or "docker-arm".
 base_genesis_dir = "templates/genesis"                                     # Genesis template directory (each run gets its own copy).
+# render_notebooks = false                                                 # Set to true to auto-render Jupyter analysis notebooks after each run.
 
 [client_images.zeam]
 executable = "zeam"                                                          # Binary on host PATH.

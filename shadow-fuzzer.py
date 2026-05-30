@@ -8,9 +8,7 @@ simulations either locally or inside a Docker ARM container.
 Usage:
   uv run shadow-fuzzer.py [config.toml]
   uv run shadow-fuzzer.py --dry-run config.example.docker-arm.toml
-  uv run shadow-fuzzer.py --serve --host 127.0.0.1 --port 8000 config.toml
-  uv run shadow-fuzzer.py --serve --clean-db config.toml
-  uv run shadow-fuzzer.py --serve --clean-output config.toml
+  uv run shadow-fuzzer.py --clean-output config.toml
 """
 
 from __future__ import annotations
@@ -24,7 +22,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +37,6 @@ SCRIPTS_DIR = FUZZER_ROOT / "scripts"
 SHADOW_EPOCH = 946684800
 SHADOW_GENESIS_TIME = 946684860
 HASH_SIG_KEY_CACHE_DIR = "_hash-sig-key-cache"
-DASHBOARD_DB_FILES = ("runs.db", "runs.db-shm", "runs.db-wal")
 
 DEFAULT_REGION_WEIGHTS = {
     "us-east": 0.30,
@@ -364,6 +360,7 @@ def _resolve_config(template: dict[str, Any], run_index: int) -> dict[str, Any]:
         "base_genesis_dir": fuzzer_raw.get(
             "base_genesis_dir", "templates/genesis"
         ),
+        "render_notebooks": fuzzer_raw.get("render_notebooks", False),
     }
 
     simulation_section: dict[str, Any] = {
@@ -502,7 +499,6 @@ def _run_genesis(
             "--genesis-time",
             str(SHADOW_GENESIS_TIME),
         ],
-        env={**os.environ, "DOCKER_USE_SUDO": "true"},
         check=True,
     )
     _store_hash_sig_key_cache(genesis_dir, cache_dir)
@@ -628,6 +624,18 @@ def _run_stats(run_dir: Path, metadata_path: Path) -> None:
     )
 
 
+def _render_notebooks(run_dir: Path) -> None:
+    """Execute and render analysis notebooks for a completed run."""
+    script = FUZZER_ROOT / "scripts" / "render_notebooks.py"
+    if not script.is_file():
+        print("  SKIP: render_notebooks.py not found")
+        return
+    subprocess.run(
+        [sys.executable, str(script), "--run-dir", str(run_dir.resolve())],
+        check=False,
+    )
+
+
 def _write_stats_snapshot(
     run_dir: Path,
     metadata: dict[str, Any],
@@ -636,9 +644,9 @@ def _write_stats_snapshot(
     status: str | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
-    from shadow_fuzzer.dashboard_events import stats_from_run
+    from shadow_fuzzer import stats_shadow
 
-    stats = stats_from_run(run_dir, metadata)
+    stats = stats_shadow.collect_stats(str(run_dir), metadata)
     warnings = list(dict.fromkeys([
         *stats.get("warnings", []),
         *(extra_warnings or []),
@@ -706,16 +714,22 @@ def _validate_resolved(resolved: dict[str, Any]) -> list[str]:
     return warnings
 
 
-def _clean_dashboard_db(output_dir: Path) -> list[Path]:
-    removed: list[Path] = []
-    for filename in DASHBOARD_DB_FILES:
-        path = output_dir / filename
-        try:
+def _clean_observatory_renders() -> None:
+    """Remove rendered notebook HTML and manifest from site/rendered/."""
+    rendered_dir = FUZZER_ROOT / "site" / "rendered"
+    if not rendered_dir.is_dir():
+        return
+    removed_any = False
+    for path in rendered_dir.iterdir():
+        if path.name == ".gitkeep":
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
             path.unlink()
-            removed.append(path)
-        except FileNotFoundError:
-            pass
-    return removed
+        removed_any = True
+    if removed_any:
+        print("Cleaned observatory rendered notebooks.")
 
 
 def _clean_output_dir(output_dir: Path) -> list[Path]:
@@ -747,24 +761,12 @@ def _parse_args() -> argparse.Namespace:
         help="Generate run artifacts and metadata without running Shadow",
     )
     parser.add_argument(
-        "--serve",
-        action="store_true",
-        help="Start the live dashboard server alongside the fuzzer",
-    )
-    parser.add_argument(
-        "--clean-db",
-        action="store_true",
-        help=(
-            "Remove output_dir/runs.db before starting. With --serve, existing run "
-            "directories are not reindexed into the fresh DB."
-        ),
-    )
-    parser.add_argument(
         "--clean-output",
         action="store_true",
         help=(
             "Remove previous run files from output_dir before starting, including "
-            "runs.db and run directories, but keep cached hash-sig keys."
+            "run directories and observatory rendered notebooks, "
+            "but keep cached hash-sig keys."
         ),
     )
     parser.add_argument(
@@ -772,17 +774,6 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Run only a single run index (0-based) instead of the full sweep",
-    )
-    parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="Dashboard bind host when --serve is enabled",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Dashboard port when --serve is enabled",
     )
     return parser.parse_args()
 
@@ -828,43 +819,9 @@ def main() -> None:
                 print(f"  Removed {path}")
         else:
             print("Output directory already clean.")
+        # Also clean observatory rendered notebooks
+        _clean_observatory_renders()
         print()
-    elif args.clean_db:
-        removed = _clean_dashboard_db(output_dir)
-        if removed:
-            print("Cleaned dashboard database:")
-            for path in removed:
-                print(f"  Removed {path}")
-        else:
-            print("Dashboard database already clean.")
-        print()
-
-    dashboard_db = None
-    fresh_dashboard = args.clean_db or args.clean_output
-    if args.serve:
-        try:
-            from shadow_fuzzer.dashboard_db import DashboardDB
-            from shadow_fuzzer.dashboard_server import start_server_background
-
-            dashboard_db = DashboardDB(output_dir / "runs.db")
-            if not fresh_dashboard:
-                indexed = dashboard_db.reindex_output_dir(output_dir)
-                if indexed:
-                    print(f"Indexed {indexed} existing dashboard run(s).")
-            start_server_background(
-                output_dir,
-                host=args.host,
-                port=args.port,
-                reindex=not fresh_dashboard,
-            )
-            print()
-        except ImportError as exc:
-            print(
-                "ERROR: --serve requires FastAPI and uvicorn. "
-                "Install requirements-fuzzer.txt first.",
-                file=sys.stderr,
-            )
-            raise exc
 
     docker_runtime = None
     if fuzzer.get("runner") == "docker-arm":
@@ -920,17 +877,6 @@ def main() -> None:
             if key in resolved:
                 metadata[key] = resolved[key]
 
-        if dashboard_db:
-            dashboard_db.start_run(run_id, run_dir, metadata, warnings)
-
-        current_stage = "preparing"
-
-        def _set_stage(stage: str) -> None:
-            nonlocal current_stage
-            current_stage = stage
-            if dashboard_db:
-                dashboard_db.update_stage(run_id, stage)
-
         try:
             print("  Generating validator config...")
             _write_validator_config(
@@ -949,7 +895,6 @@ def main() -> None:
             generate_genesis = not dry_run
 
             if generate_genesis:
-                _set_stage("generating_genesis")
                 print("  Generating genesis...")
                 _run_genesis(
                     run_dir,
@@ -957,39 +902,20 @@ def main() -> None:
                     key_cache_root=hash_sig_key_cache_root,
                 )
 
-            _set_stage("generating_topology")
             print("  Generating topology...")
             _run_topology(run_dir, {**resolved, "_internal": internal})
 
-            _set_stage("generating_shadow_yaml")
             print("  Generating shadow.yaml...")
             _run_shadow_yaml(run_dir, {**resolved, "_internal": internal})
 
-            _set_stage("running_shadow")
             print("  Running Shadow...")
-            watcher = None
             shadow_error = None
-            if dashboard_db and not dry_run:
-                from shadow_fuzzer.dashboard_live import RunLogWatcher
-
-                watcher = RunLogWatcher(
-                    dashboard_db,
-                    run_id,
-                    run_dir,
-                    float(resolved["fuzzer"]["duration_secs"]),
-                )
-                watcher.start()
             try:
-                try:
-                    _run_shadow(run_dir, {**resolved, "_internal": internal}, dry_run=dry_run)
-                except subprocess.CalledProcessError as exc:
-                    shadow_error = _shadow_failure_message(exc)
-                    print(f"  ERROR: {shadow_error}")
-            finally:
-                if watcher:
-                    watcher.stop_and_join()
+                _run_shadow(run_dir, {**resolved, "_internal": internal}, dry_run=dry_run)
+            except subprocess.CalledProcessError as exc:
+                shadow_error = _shadow_failure_message(exc)
+                print(f"  ERROR: {shadow_error}")
 
-            _set_stage("collecting_stats")
             if not dry_run:
                 print("  Collecting stats...")
                 try:
@@ -1017,20 +943,15 @@ def main() -> None:
                     dict.fromkeys([*stats.get("warnings", []), shadow_error])
                 )
                 (run_dir / "stats.json").write_text(json.dumps(stats, indent=2))
-            all_warnings = [*warnings, *stats.get("warnings", [])]
-            final_status = "error" if shadow_error else ("warning" if all_warnings else "complete")
-            if dashboard_db:
-                from shadow_fuzzer.dashboard_events import events_from_run
+            final_status = "error" if shadow_error else "complete"
 
-                dashboard_db.insert_events(run_id, events_from_run(run_dir))
-                dashboard_db.finish_run(
-                    run_id,
-                    status=final_status,
-                    stats=stats,
-                    warnings=all_warnings,
-                )
-                if shadow_error is not None:
-                    dashboard_db.fail_run(run_id, shadow_error, all_warnings)
+            # Render analysis notebooks if enabled and run succeeded
+            if not dry_run and final_status != "error" and resolved.get("render_notebooks"):
+                try:
+                    print("  Rendering analysis notebooks...")
+                    _render_notebooks(run_dir)
+                except Exception as exc:
+                    print(f"  WARNING: notebook rendering failed: {exc}")
 
             if shadow_error is not None:
                 failed_runs += 1
@@ -1038,25 +959,14 @@ def main() -> None:
             else:
                 print(f"  Done → {run_dir}")
             print()
-        except Exception as exc:
-            if dashboard_db:
-                dashboard_db.update_stage(run_id, current_stage)
-                dashboard_db.fail_run(run_id, str(exc), warnings)
+        except Exception:
             raise
 
     if failed_runs:
         print(f"Finished {max_runs} run(s) with {failed_runs} Shadow error(s).")
+        sys.exit(1)
     else:
         print(f"All {max_runs} runs complete.")
-    if args.serve:
-        print("Dashboard remains available; press Ctrl-C to stop.")
-        try:
-            while True:
-                time.sleep(3600)
-        except KeyboardInterrupt:
-            print("\nStopping dashboard.")
-    elif failed_runs:
-        sys.exit(1)
 
 
 if __name__ == "__main__":
