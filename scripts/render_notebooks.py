@@ -89,7 +89,26 @@ def _decode_numpy_binary(obj: dict) -> list:
     fmt_char, item_size = info
     count = len(raw) // item_size
     fmt = f"{byte_order}{count}{fmt_char}"
-    return list(struct.unpack(fmt, raw))
+    values = list(struct.unpack(fmt, raw))
+
+    shape_raw = obj.get("shape")
+    if not shape_raw:
+        return values
+
+    if isinstance(shape_raw, str):
+        shape = [int(part.strip()) for part in shape_raw.split(",") if part.strip()]
+    else:
+        shape = [int(part) for part in shape_raw]
+
+    def _reshape(flat: list, dims: list[int]) -> list:
+        if len(dims) <= 1:
+            return flat[:dims[0]]
+        step = 1
+        for dim in dims[1:]:
+            step *= dim
+        return [_reshape(flat[i:i + step], dims[1:]) for i in range(0, dims[0] * step, step)]
+
+    return _reshape(values, shape)
 
 
 def _sanitize_plotly_json(obj):
