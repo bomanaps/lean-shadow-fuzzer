@@ -796,7 +796,7 @@ _site_process: subprocess.Popen[bytes] | None = None
 
 
 def _start_observatory_site() -> None:
-    """Spawn `npm run dev` in site/ as a background subprocess."""
+    """Build and serve the observatory site in production mode."""
     global _site_process
     site_dir = FUZZER_ROOT / "site"
 
@@ -808,15 +808,22 @@ def _start_observatory_site() -> None:
             check=True,
         )
 
-    print("Starting observatory site (astro dev)...")
+    print("Building observatory site...")
+    subprocess.run(
+        ["npm", "run", "build"],
+        cwd=str(site_dir),
+        check=True,
+    )
+
+    print("Starting observatory site (astro preview)...")
     _site_process = subprocess.Popen(
-        ["npm", "run", "dev"],
+        ["npm", "run", "preview", "--", "--host", "0.0.0.0"],
         cwd=str(site_dir),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         preexec_fn=os.setsid,  # create new process group for clean kill
     )
-    print("Observatory site: http://localhost:4321")
+    print("Observatory site: http://0.0.0.0:4321")
     print()
 
 

@@ -1,0 +1,40 @@
+{
+  "runs": {
+    "purring-origami-hippogriff": {
+      "rendered_at": "2026-06-01T12:08:08.397030+00:00",
+      "notebooks": {
+        "analysis": {
+          "html_path": "purring-origami-hippogriff/analysis.html"
+        }
+      },
+      "metadata": {
+        "total_nodes": 64,
+        "clients": {
+          "zeam": 64
+        },
+        "status": "complete",
+        "duration_secs": 120,
+        "runner": "docker-arm",
+        "seed": 42
+      }
+    },
+    "spiritual-accelerated-foxhound": {
+      "rendered_at": "2026-06-01T12:20:42.625466+00:00",
+      "notebooks": {
+        "analysis": {
+          "html_path": "spiritual-accelerated-foxhound/analysis.html"
+        }
+      },
+      "metadata": {
+        "total_nodes": 64,
+        "clients": {
+          "zeam": 64
+        },
+        "status": "complete",
+        "duration_secs": 120,
+        "runner": "docker-arm",
+        "seed": 45
+      }
+    }
+  }
+}
