@@ -503,6 +503,7 @@ def _run_genesis(
             str(SHADOW_GENESIS_TIME),
         ],
         check=True,
+        env=os.environ | {"DOCKER_USE_SUDO": "true"},
     )
     _store_hash_sig_key_cache(genesis_dir, cache_dir)
 
@@ -634,9 +635,20 @@ def _render_notebooks(run_dir: Path) -> None:
         print("  SKIP: render_notebooks.py not found")
         return
     subprocess.run(
-        [sys.executable, str(script), "--run-dir", str(run_dir.resolve())],
+        ["uv", "run", "python3", str(script), "--run-dir", str(run_dir.resolve())],
         check=False,
     )
+    # Rebuild the static observatory site so new runs appear immediately
+    site_dir = FUZZER_ROOT / "site"
+    if (site_dir / "package.json").is_file():
+        print("  Rebuilding observatory site...")
+        subprocess.run(
+            ["npm", "run", "build"],
+            cwd=str(site_dir),
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
 
 def _write_stats_snapshot(

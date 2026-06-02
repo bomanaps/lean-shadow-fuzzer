@@ -40,7 +40,7 @@ fi
 
 # On-disk database engine (requires a zeam build that supports --db-backend).
 # Override with e.g. ZEAM_DB_BACKEND=rocksdb for RocksDB.
-zeam_db_backend="${ZEAM_DB_BACKEND:-lmdb}"
+zeam_db_backend="${ZEAM_DB_BACKEND:-rocksdb}"
 db_backend_flag="--db-backend ${zeam_db_backend}"
 
 # Chain-worker thread routing (zeam #803 slice c-2b/c-2c).
