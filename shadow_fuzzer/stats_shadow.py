@@ -400,7 +400,7 @@ def _compute_attestation_coverage_stats(
             0.95: "p95_nodes_to_95_attestations_ms",
         }
         for percentile, field_name in percentile_fields.items():
-            val = _nearest_rank(node_threshold_times, percentile, denominator=n_nodes)
+            val = _nearest_rank(node_threshold_times, percentile, denominator=len(node_threshold_times))
             if val is not None:
                 slot_d[field_name] = round(val, 1)
 
