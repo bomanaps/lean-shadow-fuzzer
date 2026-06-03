@@ -81,6 +81,15 @@ def _parse_chain_status_line(line: str, status: dict[str, Any]) -> bool:
         status["head_root"] = m.group(1).lower()
         return False
 
+    # ethlambda fork choice tree: "Head:      slot X | root Y"
+    m = re.search(r"Head:\s+slot\s+(\d+)\s+\|\s+root\s+([0-9a-fA-F]+)", clean)
+    if m:
+        status["head_slot"] = int(m.group(1))
+        status["head_root"] = m.group(2).lower()
+        if "slot" not in status:
+            status["slot"] = int(m.group(1))
+        return True
+
     m = re.search(
         r"Latest Justified:\s*Slot\s*(\d+)\s*\|\s*Root:\s*0x([0-9a-fA-F]+)",
         clean,
@@ -92,6 +101,14 @@ def _parse_chain_status_line(line: str, status: dict[str, Any]) -> bool:
         if m:
             status["latest_justified_root"] = m.group(1).lower()
             status["latest_justified_slot"] = int(m.group(2))
+            return False
+        # ethlambda fork choice tree: "Justified: slot X | root Y"
+        m = re.search(
+            r"Justified:\s+slot\s+(\d+)\s+\|\s+root\s+([0-9a-fA-F]+)", clean
+        )
+        if m:
+            status["latest_justified_slot"] = int(m.group(1))
+            status["latest_justified_root"] = m.group(2).lower()
             return False
     if m:
         status["latest_justified_slot"] = int(m.group(1))
@@ -109,6 +126,14 @@ def _parse_chain_status_line(line: str, status: dict[str, Any]) -> bool:
         if m:
             status["latest_finalized_root"] = m.group(1).lower()
             status["latest_finalized_slot"] = int(m.group(2))
+            return True
+        # ethlambda fork choice tree: "Finalized: slot X | root Y"
+        m = re.search(
+            r"Finalized:\s+slot\s+(\d+)\s+\|\s+root\s+([0-9a-fA-F]+)", clean
+        )
+        if m:
+            status["latest_finalized_slot"] = int(m.group(1))
+            status["latest_finalized_root"] = m.group(2).lower()
             return True
     if m:
         status["latest_finalized_slot"] = int(m.group(1))
@@ -185,7 +210,10 @@ def _read_host_events(
                         _append("chain_status", host_name, pending_chain_status)
                     pending_chain_status = None
 
-            if "CHAIN STATUS" in line:
+            chain_status_trigger = (
+                "CHAIN STATUS" in line or "Fork Choice Tree:" in line
+            )
+            if chain_status_trigger:
                 pending_chain_status = {
                     "ts_ms": round(ts_ms, 1),
                     "source": f"{parser.name}_text",
@@ -213,7 +241,12 @@ def _compute_attestation_slot_stats(
     slot_publishers: dict[int, set[int]] = defaultdict(set)
     for host_events in ra.values():
         for evt in host_events:
-            slot_publishers[evt["slot"]].add(evt.get("validator_id", 0))
+            n_parts = int(evt.get("num_participants", 0))
+            if n_parts > 0:
+                for vid in range(n_parts):
+                    slot_publishers[evt["slot"]].add(vid)
+            else:
+                slot_publishers[evt["slot"]].add(evt.get("validator_id", 0))
 
     slot_stats_list: list[dict[str, Any]] = []
 
@@ -230,9 +263,15 @@ def _compute_attestation_slot_stats(
                     continue
                 ts_val = _event_ts_ms(evt)
                 offset = ts_val - genesis_ms
-                vid = evt.get("validator_id", 0)
-                if vid not in received or offset < received[vid]:
-                    received[vid] = offset
+                n_parts = int(evt.get("num_participants", 0))
+                if n_parts > 0:
+                    for vid in range(n_parts):
+                        if vid not in received or offset < received[vid]:
+                            received[vid] = offset
+                else:
+                    vid = evt.get("validator_id", 0)
+                    if vid not in received or offset < received[vid]:
+                        received[vid] = offset
 
             if len(received) < 2:
                 continue
@@ -305,11 +344,20 @@ def _compute_attestation_coverage_stats(
     for host_name, host_events in ra.items():
         for evt in host_events:
             slot = int(evt["slot"])
-            att_id = (slot, int(evt.get("validator_id", 0)))
-            ts_ms = _event_ts_ms(evt)
-            previous = known_times[slot][host_name].get(att_id)
-            if previous is None or ts_ms < previous:
-                known_times[slot][host_name][att_id] = ts_ms
+            # Aggregated attestation covering all validators in the slot
+            n_participants = int(evt.get("num_participants", 0))
+            if n_participants > 0 and slot in published_by_slot:
+                ts_ms = _event_ts_ms(evt)
+                for att_id in published_by_slot[slot]:
+                    previous = known_times[slot][host_name].get(att_id)
+                    if previous is None or ts_ms < previous:
+                        known_times[slot][host_name][att_id] = ts_ms
+            else:
+                att_id = (slot, int(evt.get("validator_id", 0)))
+                ts_ms = _event_ts_ms(evt)
+                previous = known_times[slot][host_name].get(att_id)
+                if previous is None or ts_ms < previous:
+                    known_times[slot][host_name][att_id] = ts_ms
             sources_seen.add(evt.get("source", "unknown"))
 
     slot_stats: list[dict[str, Any]] = []
