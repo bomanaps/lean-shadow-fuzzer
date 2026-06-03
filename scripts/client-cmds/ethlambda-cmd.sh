@@ -33,11 +33,7 @@ fi
 
 # Command when running as binary
 node_binary="$binary_path \
-      --genesis $configDir/config.yaml \
-      --validators $configDir/annotated_validators.yaml \
-      --bootnodes $configDir/nodes.yaml \
-      --validator-config $configDir/validator-config.yaml \
-      --hash-sig-keys-dir $configDir/hash-sig-keys \
+      --custom-network-config-dir $configDir \
       --data-dir $dataDir/$item \
       --gossipsub-port $quicPort \
       --node-id $item \

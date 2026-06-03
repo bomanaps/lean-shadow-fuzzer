@@ -503,7 +503,7 @@ def _run_genesis(
             str(SHADOW_GENESIS_TIME),
         ],
         check=True,
-        env=os.environ | {"DOCKER_USE_SUDO": "true"},
+        env=os.environ | {"DOCKER_USE_SUDO": "false"},
     )
     _store_hash_sig_key_cache(genesis_dir, cache_dir)
 
