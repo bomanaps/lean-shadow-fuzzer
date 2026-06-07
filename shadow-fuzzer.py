@@ -601,6 +601,12 @@ def _run_shadow(run_dir: Path, resolved: dict[str, Any], dry_run: bool = False) 
         docker_image = resolved.get("docker_arm", {}).get(
             "image_name", "kamilsa/shadow-arm:latest"
         )
+        # Remove any stale container with the same name from a previous run
+        subprocess.run(
+            ["docker", "rm", "-f", "shadow-sim-container"],
+            check=False,
+            capture_output=True,
+        )
         subprocess.run(
             [
                 "docker", "run", "--rm",
