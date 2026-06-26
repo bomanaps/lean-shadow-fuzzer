@@ -1,8 +1,8 @@
 #!/bin/bash
 
 #-----------------------lantern setup----------------------
-LANTERN_IMAGE="${LANTERN_IMAGE:-piertwo/lantern:v0.0.4}"
-lantern_binary="${LANTERN_BINARY:-lantern_cli}"
+LANTERN_IMAGE="${LANTERN_IMAGE:-piertwo/lantern:v0.0.5-shadow}"
+lantern_binary="${LANTERN_BINARY:-lantern}"
 
 devnet_flag=""
 if [ -n "$devnet" ]; then
@@ -53,15 +53,24 @@ if [ -n "${LANTERN_SHADOW_XMSS_MERGE_RATE:-}" ]; then
 fi
 
 # Lantern's repo: https://github.com/Pier-Two/lantern
-node_binary="/usr/bin/env OPENSSL_ia32cap=~0x4000000000000000:~0x00040000 $lantern_binary \
+#
+# Flags match the v0.0.5 CLI (see /usr/local/bin/lantern-entrypoint.sh in the
+# image). Notably v0.0.5 takes a single --validator_config DIR that holds both
+# annotated_validators.yaml and validator-config.yaml (the genesis dir), and
+# discovers peers via --bootnodes pointing at nodes.yaml.
+#
+# NOTE: do not prefix node_binary with `/usr/bin/env VAR=... `. generate-shadow-yaml.sh
+# replaces only the first whitespace-delimited token with the resolved binary
+# path, so a prefix would be left in the args. OPENSSL_ia32cap is an x86-only
+# knob and a no-op on arm64 anyway.
+node_binary="$lantern_binary \
         --data-dir $dataDir/$item \
         --genesis-config $configDir/config.yaml \
-        --validator-registry-path $configDir/validators.yaml \
-        --validator-keys-path $configDir/annotated_validators.yaml \
-        --genesis-state $configDir/genesis.ssz \
-        --validator-config $configDir/validator-config.yaml \
-        $devnet_flag \
         --nodes-path $configDir/nodes.yaml \
+        --genesis-state $configDir/genesis.ssz \
+        --validator_config $configDir \
+        --bootnodes $configDir/nodes.yaml \
+        $devnet_flag \
         --node-id $item --node-key-path $configDir/$privKeyPath \
         --listen-address /ip4/0.0.0.0/udp/$quicPort/quic-v1 \
         --metrics-port $metricsPort \
@@ -76,12 +85,11 @@ node_binary="/usr/bin/env OPENSSL_ia32cap=~0x4000000000000000:~0x00040000 $lante
 
 node_docker="$LANTERN_IMAGE --data-dir /data \
         --genesis-config /config/config.yaml \
-        --validator-registry-path /config/validators.yaml \
-        --validator-keys-path /config/annotated_validators.yaml \
-        --genesis-state /config/genesis.ssz \
-        --validator-config /config/validator-config.yaml \
-        $devnet_flag \
         --nodes-path /config/nodes.yaml \
+        --genesis-state /config/genesis.ssz \
+        --validator_config /config \
+        --bootnodes /config/nodes.yaml \
+        $devnet_flag \
         --node-id $item --node-key-path /config/$privKeyPath \
         --listen-address /ip4/0.0.0.0/udp/$quicPort/quic-v1 \
         --metrics-port $metricsPort \
